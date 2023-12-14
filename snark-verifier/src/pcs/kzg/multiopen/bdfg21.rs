@@ -6,7 +6,7 @@ use crate::{
         PolynomialCommitmentScheme, Query,
     },
     util::{
-        arithmetic::{CurveAffine, FieldExt, Fraction, MultiMillerLoop},
+        arithmetic::{CurveAffine, Fraction, MultiMillerLoop, PrimeField},
         msm::Msm,
         transcript::TranscriptRead,
         Itertools,
@@ -14,6 +14,7 @@ use crate::{
     Error,
 };
 use std::{
+    cmp::Ord,
     collections::{BTreeMap, BTreeSet},
     marker::PhantomData,
 };
@@ -27,6 +28,7 @@ pub struct Bdfg21;
 impl<M, L> PolynomialCommitmentScheme<M::G1Affine, L> for KzgAs<M, Bdfg21>
 where
     M: MultiMillerLoop,
+    M::Scalar: Ord,
     L: Loader<M::G1Affine>,
 {
     type VerifyingKey = KzgSuccinctVerifyingKey<M::G1Affine>;
@@ -55,9 +57,8 @@ where
         let f = {
             let coeffs = query_set_coeffs(&sets, z, &proof.z_prime);
 
-            let powers_of_mu = proof
-                .mu
-                .powers(sets.iter().map(|set| set.polys.len()).max().unwrap());
+            let powers_of_mu =
+                proof.mu.powers(sets.iter().map(|set| set.polys.len()).max().unwrap());
             let msms = sets
                 .iter()
                 .zip(coeffs.iter())
@@ -72,10 +73,7 @@ where
         let rhs = Msm::base(&proof.w_prime);
         let lhs = f + rhs.clone() * &proof.z_prime;
 
-        Ok(KzgAccumulator::new(
-            lhs.evaluate(Some(svk.g)),
-            rhs.evaluate(Some(svk.g)),
-        ))
+        Ok(KzgAccumulator::new(lhs.evaluate(Some(svk.g)), rhs.evaluate(Some(svk.g))))
     }
 }
 
@@ -104,24 +102,14 @@ where
         let w = transcript.read_ec_point()?;
         let z_prime = transcript.squeeze_challenge();
         let w_prime = transcript.read_ec_point()?;
-        Ok(Bdfg21Proof {
-            mu,
-            gamma,
-            w,
-            z_prime,
-            w_prime,
-        })
+        Ok(Bdfg21Proof { mu, gamma, w, z_prime, w_prime })
     }
 }
 
-fn query_sets<F: FieldExt, T: Clone>(queries: &[Query<F, T>]) -> Vec<QuerySet<F, T>> {
-    let poly_shifts = queries.iter().fold(
-        Vec::<(usize, Vec<F>, Vec<&T>)>::new(),
-        |mut poly_shifts, query| {
-            if let Some(pos) = poly_shifts
-                .iter()
-                .position(|(poly, _, _)| *poly == query.poly)
-            {
+fn query_sets<F: PrimeField + Ord, T: Clone>(queries: &[Query<F, T>]) -> Vec<QuerySet<F, T>> {
+    let poly_shifts =
+        queries.iter().fold(Vec::<(usize, Vec<F>, Vec<&T>)>::new(), |mut poly_shifts, query| {
+            if let Some(pos) = poly_shifts.iter().position(|(poly, _, _)| *poly == query.poly) {
                 let (_, shifts, evals) = &mut poly_shifts[pos];
                 if !shifts.contains(&query.shift) {
                     shifts.push(query.shift);
@@ -131,67 +119,47 @@ fn query_sets<F: FieldExt, T: Clone>(queries: &[Query<F, T>]) -> Vec<QuerySet<F,
                 poly_shifts.push((query.poly, vec![query.shift], vec![&query.eval]));
             }
             poly_shifts
-        },
-    );
+        });
 
-    poly_shifts.into_iter().fold(
-        Vec::<QuerySet<F, T>>::new(),
-        |mut sets, (poly, shifts, evals)| {
-            if let Some(pos) = sets.iter().position(|set| {
-                BTreeSet::from_iter(set.shifts.iter()) == BTreeSet::from_iter(shifts.iter())
-            }) {
-                let set = &mut sets[pos];
-                if !set.polys.contains(&poly) {
-                    set.polys.push(poly);
-                    set.evals.push(
-                        set.shifts
-                            .iter()
-                            .map(|lhs| {
-                                let idx = shifts.iter().position(|rhs| lhs == rhs).unwrap();
-                                evals[idx]
-                            })
-                            .collect(),
-                    );
-                }
-            } else {
-                let set = QuerySet {
-                    shifts,
-                    polys: vec![poly],
-                    evals: vec![evals],
-                };
-                sets.push(set);
+    poly_shifts.into_iter().fold(Vec::<QuerySet<F, T>>::new(), |mut sets, (poly, shifts, evals)| {
+        if let Some(pos) = sets.iter().position(|set| {
+            BTreeSet::from_iter(set.shifts.iter()) == BTreeSet::from_iter(shifts.iter())
+        }) {
+            let set = &mut sets[pos];
+            if !set.polys.contains(&poly) {
+                set.polys.push(poly);
+                set.evals.push(
+                    set.shifts
+                        .iter()
+                        .map(|lhs| {
+                            let idx = shifts.iter().position(|rhs| lhs == rhs).unwrap();
+                            evals[idx]
+                        })
+                        .collect(),
+                );
             }
-            sets
-        },
-    )
+        } else {
+            let set = QuerySet { shifts, polys: vec![poly], evals: vec![evals] };
+            sets.push(set);
+        }
+        sets
+    })
 }
 
-fn query_set_coeffs<'a, F: FieldExt, T: LoadedScalar<F>>(
+fn query_set_coeffs<'a, F: PrimeField + Ord, T: LoadedScalar<F>>(
     sets: &[QuerySet<'a, F, T>],
     z: &T,
     z_prime: &T,
 ) -> Vec<QuerySetCoeff<F, T>> {
     let loader = z.loader();
 
-    let superset = sets
-        .iter()
-        .flat_map(|set| set.shifts.clone())
-        .sorted()
-        .dedup();
+    let superset = sets.iter().flat_map(|set| set.shifts.clone()).sorted().dedup();
 
-    let size = sets
-        .iter()
-        .map(|set| set.shifts.len())
-        .chain(Some(2))
-        .max()
-        .unwrap();
+    let size = sets.iter().map(|set| set.shifts.len()).chain(Some(2)).max().unwrap();
     let powers_of_z = z.powers(size);
-    let z_prime_minus_z_shift_i = BTreeMap::from_iter(superset.map(|shift| {
-        (
-            shift,
-            z_prime.clone() - z.clone() * loader.load_const(&shift),
-        )
-    }));
+    let z_prime_minus_z_shift_i = BTreeMap::from_iter(
+        superset.map(|shift| (shift, z_prime.clone() - z.clone() * loader.load_const(&shift))),
+    );
 
     let mut z_s_1 = None;
     let mut coeffs = sets
@@ -225,7 +193,7 @@ struct QuerySet<'a, F, T> {
     evals: Vec<Vec<&'a T>>,
 }
 
-impl<'a, F: FieldExt, T: LoadedScalar<F>> QuerySet<'a, F, T> {
+impl<'a, F: PrimeField, T: LoadedScalar<F>> QuerySet<'a, F, T> {
     fn msm<C: CurveAffine, L: Loader<C, LoadedScalar = T>>(
         &self,
         coeff: &QuerySetCoeff<F, T>,
@@ -270,7 +238,7 @@ struct QuerySetCoeff<F, T> {
 
 impl<F, T> QuerySetCoeff<F, T>
 where
-    F: FieldExt,
+    F: PrimeField + Ord,
     T: LoadedScalar<F>,
 {
     fn new(
@@ -292,7 +260,7 @@ where
                     .filter(|&(i, _)| i != j)
                     .map(|(_, shift_i)| (*shift_j - shift_i))
                     .reduce(|acc, value| acc * value)
-                    .unwrap_or_else(|| F::one())
+                    .unwrap_or_else(|| F::ONE)
             })
             .collect_vec();
 
@@ -312,10 +280,7 @@ where
             .collect_vec();
 
         let z_s = loader.product(
-            &shifts
-                .iter()
-                .map(|shift| z_prime_minus_z_shift_i.get(shift).unwrap())
-                .collect_vec(),
+            &shifts.iter().map(|shift| z_prime_minus_z_shift_i.get(shift).unwrap()).collect_vec(),
         );
         let z_s_1_over_z_s = z_s_1.clone().map(|z_s_1| Fraction::new(z_s_1, z_s.clone()));
 
@@ -344,13 +309,8 @@ where
                 .iter_mut()
                 .chain(self.commitment_coeff.as_mut())
                 .for_each(Fraction::evaluate);
-            let barycentric_weights_sum = loader.sum(
-                &self
-                    .eval_coeffs
-                    .iter()
-                    .map(Fraction::evaluated)
-                    .collect_vec(),
-            );
+            let barycentric_weights_sum =
+                loader.sum(&self.eval_coeffs.iter().map(Fraction::evaluated).collect_vec());
             self.r_eval_coeff = Some(match self.commitment_coeff.as_ref() {
                 Some(coeff) => Fraction::new(coeff.evaluated().clone(), barycentric_weights_sum),
                 None => Fraction::one_over(barycentric_weights_sum),
@@ -373,10 +333,6 @@ where
     type Input = Vec<Query<M::Scalar>>;
 
     fn estimate_cost(_: &Vec<Query<M::Scalar>>) -> Cost {
-        Cost {
-            num_commitment: 2,
-            num_msm: 2,
-            ..Default::default()
-        }
+        Cost { num_commitment: 2, num_msm: 2, ..Default::default() }
     }
 }

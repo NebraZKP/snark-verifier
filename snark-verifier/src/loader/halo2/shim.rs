@@ -1,8 +1,8 @@
-use crate::util::arithmetic::{CurveAffine, FieldExt};
+use crate::util::arithmetic::{CurveAffine, PrimeField};
 use std::{fmt::Debug, ops::Deref};
 
 /// Instructions to handle field element operations.
-pub trait IntegerInstructions<F: FieldExt>: Clone + Debug {
+pub trait IntegerInstructions<F: PrimeField>: Clone + Debug {
     /// Context (either enhanced `region` or some kind of builder).
     type Context: Debug;
     /// Assigned cell.
@@ -24,8 +24,8 @@ pub trait IntegerInstructions<F: FieldExt>: Clone + Debug {
     fn sum_with_coeff_and_const(
         &self,
         ctx: &mut Self::Context,
-        values: &[(F::Scalar, impl Deref<Target = Self::AssignedInteger>)],
-        constant: F::Scalar,
+        values: &[(F, impl Deref<Target = Self::AssignedInteger>)],
+        constant: F,
     ) -> Self::AssignedInteger;
 
     /// Sum product of integers with coefficients and constant.
@@ -33,11 +33,11 @@ pub trait IntegerInstructions<F: FieldExt>: Clone + Debug {
         &self,
         ctx: &mut Self::Context,
         values: &[(
-            F::Scalar,
+            F,
             impl Deref<Target = Self::AssignedInteger>,
             impl Deref<Target = Self::AssignedInteger>,
         )],
-        constant: F::Scalar,
+        constant: F,
     ) -> Self::AssignedInteger;
 
     /// Returns `lhs - rhs`.
@@ -166,14 +166,14 @@ mod halo2_lib {
         fn sum_with_coeff_and_const(
             &self,
             ctx: &mut Self::Context,
-            values: &[(F::Scalar, impl Deref<Target = Self::AssignedInteger>)],
+            values: &[(F, impl Deref<Target = Self::AssignedInteger>)],
             constant: F,
         ) -> Self::AssignedInteger {
             let mut a = Vec::with_capacity(values.len() + 1);
             let mut b = Vec::with_capacity(values.len() + 1);
-            if constant != F::zero() {
+            if constant != F::ZERO {
                 a.push(Constant(constant));
-                b.push(Constant(F::one()));
+                b.push(Constant(F::ONE));
             }
             a.extend(values.iter().map(|(_, a)| Existing(*a.deref())));
             b.extend(values.iter().map(|(c, _)| Constant(*c)));
@@ -184,7 +184,7 @@ mod halo2_lib {
             &self,
             ctx: &mut Self::Context,
             values: &[(
-                F::Scalar,
+                F,
                 impl Deref<Target = Self::AssignedInteger>,
                 impl Deref<Target = Self::AssignedInteger>,
             )],
@@ -220,8 +220,8 @@ mod halo2_lib {
         ) -> Self::AssignedInteger {
             // make sure scalar != 0
             let is_zero = self.is_zero(ctx.main(0), *a);
-            self.assert_is_const(ctx.main(0), &is_zero, &F::zero());
-            GateInstructions::div_unsafe(self, ctx.main(0), Constant(F::one()), Existing(*a))
+            self.assert_is_const(ctx.main(0), &is_zero, &F::ZERO);
+            GateInstructions::div_unsafe(self, ctx.main(0), Constant(F::ONE), Existing(*a))
         }
 
         fn assert_equal(

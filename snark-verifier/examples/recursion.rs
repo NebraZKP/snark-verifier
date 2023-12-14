@@ -11,7 +11,6 @@ use halo2_proofs::{
     halo2curves::{
         bn256::{Bn256, Fr, G1Affine},
         group::ff::Field,
-        FieldExt,
     },
     plonk::{
         self, create_proof, keygen_pk, keygen_vk, Circuit, ConstraintSystem, Error, ProvingKey,

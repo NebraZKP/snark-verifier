@@ -2959,7 +2959,7 @@ dependencies = [
 [[package]]
 name = "poseidon-circuit"
 version = "0.1.0"
-source = "git+https://github.com/scroll-tech/poseidon-circuit.git#c6f058bcf3bb0c7933d1979563c414f5cc480f25"
+source = "git+ssh://git@github.com/NebraZKP/poseidon-circuit.git?branch=scroll-gpu#3456c3b020f4ce76d5dbe3cee7e3ca1c9a6e9d23"
 dependencies = [
  "bitvec 1.0.1",
  "ff 0.13.0",

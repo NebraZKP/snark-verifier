@@ -147,6 +147,9 @@ mod halo2_lib {
     };
     use std::ops::Deref;
 
+    // TODO: This shouldn't be needed
+    use halo2_base::ff::PrimeField as ffPrimeField;
+
     type AssignedInteger<C> = ProperCrtUint<<C as CurveAffine>::ScalarExt>;
     type AssignedEcPoint<C> = EcPoint<<C as CurveAffine>::ScalarExt, AssignedInteger<C>>;
 

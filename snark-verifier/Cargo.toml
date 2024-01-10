@@ -14,7 +14,7 @@ rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
 
 # Use halo2-base as non-optional dependency because it re-exports halo2_proofs, halo2curves, and poseidon, using different repos based on feature flag "halo2-axiom" or "halo2-pse"
-halo2-base = { git = "ssh://git@github.com/NebraZKP/halo2-lib-0.3.0.git", branch = "scroll-gpu", features = ["halo2-pse"] }
+halo2-base = { git = "ssh://git@github.com/NebraZKP/halo2-lib-0.3.0.git", branch = "scroll-gpu-as-feature", default-feature = false }
 # This is Scroll's audited poseidon circuit. We only use it for the Native Poseidon spec. We do not use the halo2 circuit at all (and it wouldn't even work because the halo2_proofs tag is not compatbile).
 poseidon-circuit = { git = "ssh://git@github.com/NebraZKP/poseidon-circuit.git", branch = "scroll-gpu" }
 
@@ -29,7 +29,7 @@ rlp = { version = "=0.5.2", default-features = false, features = ["std"], option
 revm = { version = "=2.3.1", optional = true }
 
 # loader_halo2
-halo2-ecc = { git = "ssh://git@github.com/NebraZKP/halo2-lib-0.3.0.git", branch = "scroll-gpu", default-features = false, optional = true }
+halo2-ecc = { git = "ssh://git@github.com/NebraZKP/halo2-lib-0.3.0.git", branch = "scroll-gpu-as-feature", default-features = false, optional = true }
 
 [dev-dependencies]
 ark-std = { version = "0.3.0", features = ["print-trace"] }
@@ -42,7 +42,7 @@ crossterm = { version = "0.25" }
 tui = { version = "0.19", default-features = false, features = ["crossterm"] }
 
 [features]
-default = ["loader_evm", "loader_halo2", "halo2-pse", "display"]
+default = ["loader_evm", "loader_halo2", "display"]
 display = ["halo2-base/display", "halo2-ecc?/display"]
 loader_evm = ["dep:primitive-types", "dep:sha3", "dep:revm", "dep:bytes", "dep:rlp"]
 loader_halo2 = ["halo2-ecc"]

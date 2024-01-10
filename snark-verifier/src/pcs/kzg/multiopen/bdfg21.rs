@@ -25,55 +25,140 @@ use std::{
 #[derive(Clone, Debug)]
 pub struct Bdfg21;
 
-impl<M, L> PolynomialCommitmentScheme<M::G1Affine, L> for KzgAs<M, Bdfg21>
-where
-    M: MultiMillerLoop,
-    M::Scalar: Ord,
-    L: Loader<M::G1Affine>,
-{
-    type VerifyingKey = KzgSuccinctVerifyingKey<M::G1Affine>;
-    type Proof = Bdfg21Proof<M::G1Affine, L>;
-    type Output = KzgAccumulator<M::G1Affine, L>;
+#[cfg(all(feature = "loader_evm", feature = "halo2-pse"))]
+mod foo {
+    use super::*;
 
-    fn read_proof<T>(
-        _: &KzgSuccinctVerifyingKey<M::G1Affine>,
-        _: &[Query<M::Scalar>],
-        transcript: &mut T,
-    ) -> Result<Bdfg21Proof<M::G1Affine, L>, Error>
+    impl<M, L> PolynomialCommitmentScheme<M::G1Affine, L> for KzgAs<M, Bdfg21>
     where
-        T: TranscriptRead<M::G1Affine, L>,
+        M: MultiMillerLoop,
+        M::Scalar: Ord,
+        L: Loader<M::G1Affine>,
     {
-        Bdfg21Proof::read(transcript)
+        type VerifyingKey = KzgSuccinctVerifyingKey<M::G1Affine>;
+        type Proof = Bdfg21Proof<M::G1Affine, L>;
+        type Output = KzgAccumulator<M::G1Affine, L>;
+
+        fn read_proof<T>(
+            _: &KzgSuccinctVerifyingKey<M::G1Affine>,
+            _: &[Query<M::Scalar>],
+            transcript: &mut T,
+        ) -> Result<Bdfg21Proof<M::G1Affine, L>, Error>
+        where
+            T: TranscriptRead<M::G1Affine, L>,
+        {
+            Bdfg21Proof::read(transcript)
+        }
+
+        fn verify(
+            svk: &KzgSuccinctVerifyingKey<M::G1Affine>,
+            commitments: &[Msm<M::G1Affine, L>],
+            z: &L::LoadedScalar,
+            queries: &[Query<M::Scalar, L::LoadedScalar>],
+            proof: &Bdfg21Proof<M::G1Affine, L>,
+        ) -> Result<Self::Output, Error> {
+            let sets = query_sets(queries);
+            let f = {
+                let coeffs = query_set_coeffs(&sets, z, &proof.z_prime);
+
+                let powers_of_mu =
+                    proof.mu.powers(sets.iter().map(|set| set.polys.len()).max().unwrap());
+                let msms = sets
+                    .iter()
+                    .zip(coeffs.iter())
+                    .map(|(set, coeff)| set.msm(coeff, commitments, &powers_of_mu));
+
+                msms.zip(proof.gamma.powers(sets.len()).into_iter())
+                    .map(|(msm, power_of_gamma)| msm * &power_of_gamma)
+                    .sum::<Msm<_, _>>()
+                    - Msm::base(&proof.w) * &coeffs[0].z_s
+            };
+
+            let rhs = Msm::base(&proof.w_prime);
+            let lhs = f + rhs.clone() * &proof.z_prime;
+
+            Ok(KzgAccumulator::new(lhs.evaluate(Some(svk.g)), rhs.evaluate(Some(svk.g))))
+        }
     }
 
-    fn verify(
-        svk: &KzgSuccinctVerifyingKey<M::G1Affine>,
-        commitments: &[Msm<M::G1Affine, L>],
-        z: &L::LoadedScalar,
-        queries: &[Query<M::Scalar, L::LoadedScalar>],
-        proof: &Bdfg21Proof<M::G1Affine, L>,
-    ) -> Result<Self::Output, Error> {
-        let sets = query_sets(queries);
-        let f = {
-            let coeffs = query_set_coeffs(&sets, z, &proof.z_prime);
+    impl<M> CostEstimation<M::G1Affine> for KzgAs<M, Bdfg21>
+    where
+        M: MultiMillerLoop,
+    {
+        type Input = Vec<Query<M::Scalar>>;
 
-            let powers_of_mu =
-                proof.mu.powers(sets.iter().map(|set| set.polys.len()).max().unwrap());
-            let msms = sets
-                .iter()
-                .zip(coeffs.iter())
-                .map(|(set, coeff)| set.msm(coeff, commitments, &powers_of_mu));
+        fn estimate_cost(_: &Vec<Query<M::Scalar>>) -> Cost {
+            Cost { num_commitment: 2, num_msm: 2, ..Default::default() }
+        }
+    }
+}
 
-            msms.zip(proof.gamma.powers(sets.len()).into_iter())
-                .map(|(msm, power_of_gamma)| msm * &power_of_gamma)
-                .sum::<Msm<_, _>>()
-                - Msm::base(&proof.w) * &coeffs[0].z_s
-        };
+#[cfg(all(feature = "loader_evm", feature = "halo2-axiom"))]
+mod foo {
+    use super::*;
 
-        let rhs = Msm::base(&proof.w_prime);
-        let lhs = f + rhs.clone() * &proof.z_prime;
+    impl<M, L> PolynomialCommitmentScheme<M::G1Affine, L> for KzgAs<M, Bdfg21>
+    where
+        M: MultiMillerLoop,
+        M::G1Affine: CurveAffine<ScalarExt = M::Fr>,
+        M::Fr: Ord,
+        L: Loader<M::G1Affine>,
+    {
+        type VerifyingKey = KzgSuccinctVerifyingKey<M::G1Affine>;
+        type Proof = Bdfg21Proof<M::G1Affine, L>;
+        type Output = KzgAccumulator<M::G1Affine, L>;
 
-        Ok(KzgAccumulator::new(lhs.evaluate(Some(svk.g)), rhs.evaluate(Some(svk.g))))
+        fn read_proof<T>(
+            _: &KzgSuccinctVerifyingKey<M::G1Affine>,
+            _: &[Query<M::Fr>],
+            transcript: &mut T,
+        ) -> Result<Bdfg21Proof<M::G1Affine, L>, Error>
+        where
+            T: TranscriptRead<M::G1Affine, L>,
+        {
+            Bdfg21Proof::read(transcript)
+        }
+
+        fn verify(
+            svk: &KzgSuccinctVerifyingKey<M::G1Affine>,
+            commitments: &[Msm<M::G1Affine, L>],
+            z: &L::LoadedScalar,
+            queries: &[Query<M::Fr, L::LoadedScalar>],
+            proof: &Bdfg21Proof<M::G1Affine, L>,
+        ) -> Result<Self::Output, Error> {
+            let sets = query_sets(queries);
+            let f = {
+                let coeffs = query_set_coeffs(&sets, z, &proof.z_prime);
+
+                let powers_of_mu =
+                    proof.mu.powers(sets.iter().map(|set| set.polys.len()).max().unwrap());
+                let msms = sets
+                    .iter()
+                    .zip(coeffs.iter())
+                    .map(|(set, coeff)| set.msm(coeff, commitments, &powers_of_mu));
+
+                msms.zip(proof.gamma.powers(sets.len()).into_iter())
+                    .map(|(msm, power_of_gamma)| msm * &power_of_gamma)
+                    .sum::<Msm<_, _>>()
+                    - Msm::base(&proof.w) * &coeffs[0].z_s
+            };
+
+            let rhs = Msm::base(&proof.w_prime);
+            let lhs = f + rhs.clone() * &proof.z_prime;
+
+            Ok(KzgAccumulator::new(lhs.evaluate(Some(svk.g)), rhs.evaluate(Some(svk.g))))
+        }
+    }
+
+    impl<M> CostEstimation<M::G1Affine> for KzgAs<M, Bdfg21>
+    where
+        M: MultiMillerLoop,
+    {
+        type Input = Vec<Query<M::Fr>>;
+
+        fn estimate_cost(_: &Vec<Query<M::Fr>>) -> Cost {
+            Cost { num_commitment: 2, num_msm: 2, ..Default::default() }
+        }
     }
 }
 
@@ -323,16 +408,5 @@ where
 
     fn evaluate(&mut self) {
         self.r_eval_coeff.as_mut().unwrap().evaluate();
-    }
-}
-
-impl<M> CostEstimation<M::G1Affine> for KzgAs<M, Bdfg21>
-where
-    M: MultiMillerLoop,
-{
-    type Input = Vec<Query<M::Scalar>>;
-
-    fn estimate_cost(_: &Vec<Query<M::Scalar>>) -> Cost {
-        Cost { num_commitment: 2, num_msm: 2, ..Default::default() }
     }
 }

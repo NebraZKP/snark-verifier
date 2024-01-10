@@ -19,6 +19,7 @@ pub struct KzgAs<M, MOS>(PhantomData<(M, MOS)>);
 impl<M, L, MOS> AccumulationScheme<M::G1Affine, L> for KzgAs<M, MOS>
 where
     M: MultiMillerLoop,
+    M::G1Affine: CurveAffine,
     L: Loader<M::G1Affine>,
     MOS: Clone + Debug,
 {
@@ -136,9 +137,14 @@ where
     }
 }
 
-impl<M, MOS> AccumulationSchemeProver<M::G1Affine> for KzgAs<M, MOS>
+#[cfg(feature = "halo2-pse")]
+mod foo{
+    use super::*;
+    
+    impl<M, MOS> AccumulationSchemeProver<M::G1Affine> for KzgAs<M, MOS>
 where
     M: MultiMillerLoop,
+    M::G1Affine: CurveAffine,
     MOS: Clone + Debug,
 {
     type ProvingKey = KzgAsProvingKey<M::G1Affine>;
@@ -193,4 +199,69 @@ where
 
         Ok(KzgAccumulator::new(lhs, rhs))
     }
-}
+}}
+
+
+#[cfg(feature = "halo2-axiom")]
+mod foo{
+    use super::*;
+
+    impl<M, MOS> AccumulationSchemeProver<M::G1Affine> for KzgAs<M, MOS>
+where
+    M: MultiMillerLoop,
+    M::G1Affine: CurveAffine,
+    MOS: Clone + Debug,
+{
+    type ProvingKey = KzgAsProvingKey<M::G1Affine>;
+
+    fn create_proof<T, R>(
+        pk: &Self::ProvingKey,
+        instances: &[KzgAccumulator<M::G1Affine, NativeLoader>],
+        transcript: &mut T,
+        rng: R,
+    ) -> Result<KzgAccumulator<M::G1Affine, NativeLoader>, Error>
+    where
+        T: TranscriptWrite<M::G1Affine>,
+        R: Rng,
+    {
+        assert!(!instances.is_empty());
+
+        for accumulator in instances {
+            transcript.common_ec_point(&accumulator.lhs)?;
+            transcript.common_ec_point(&accumulator.rhs)?;
+        }
+
+        let blind = pk
+            .zk()
+            .then(|| {
+                let s = M::Fr::random(rng);
+                let (g, s_g) = pk.0.unwrap();
+                let lhs = (s_g * s).to_affine();
+                let rhs = (g * s).to_affine();
+                transcript.write_ec_point(lhs)?;
+                transcript.write_ec_point(rhs)?;
+                Ok((lhs, rhs))
+            })
+            .transpose()?;
+
+        let r = transcript.squeeze_challenge();
+
+        let (lhs, rhs) = instances
+            .iter()
+            .cloned()
+            .map(|accumulator| (accumulator.lhs, accumulator.rhs))
+            .chain(blind)
+            .unzip::<_, _, Vec<_>, Vec<_>>();
+
+        let powers_of_r = r.powers(lhs.len());
+        let [lhs, rhs] = [lhs, rhs].map(|msms| {
+            msms.iter()
+                .zip(powers_of_r.iter())
+                .map(|(msm, power_of_r)| Msm::<M::G1Affine, NativeLoader>::base(msm) * power_of_r)
+                .sum::<Msm<_, _>>()
+                .evaluate(None)
+        });
+
+        Ok(KzgAccumulator::new(lhs, rhs))
+    }
+}}

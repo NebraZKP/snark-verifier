@@ -33,6 +33,3 @@ incremental = false
 [profile.flamegraph]
 inherits = "release"
 debug = true
-
-[patch.'https://github.com/privacy-scaling-explorations/halo2.git']
-halo2_proofs = { git = "ssh://git@github.com/NebraZKP/halo2-gpu-scroll.git", package = "halo2_proofs", branch = "poseidon"  }
